@@ -1,0 +1,38 @@
+{
+  "name": "dsh-space-optimizer",
+  "version": "1.0.0",
+  "private": false,
+  "description": "DSH sidebar space ledger: see what every task occupies on disk, then opt in to reclaiming unowned junk. Session logs are never trimmed.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "disk-space",
+    "storage",
+    "session",
+    "cleanup"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wojiao42/dsh-space-optimizer.git"
+  }
+}

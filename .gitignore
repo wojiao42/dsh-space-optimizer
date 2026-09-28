@@ -1,0 +1,10 @@
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+
+# 出截图时的中间 HTML（PNG 是产物，HTML 可随时用 tools/render-panel.mjs 重新生成）
+assets/*.html
+
+# 发布令牌绝不能进仓库
+.gh-token
