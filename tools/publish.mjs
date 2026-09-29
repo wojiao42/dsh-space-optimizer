@@ -361,6 +361,28 @@ async function main() {
       }
     }
 
+    // 分支要建在自己的 fork 上：先确保 fork 存在并可用（都是 API 调用，不 clone）
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    if (!dryRun) {
+      try {
+        ghRun(['repo', 'fork', AWESOME_REPO, '--clone=false'])
+        console.log('  已创建 fork')
+      } catch {
+        console.log('  fork 已存在，复用')
+      }
+      let reachable = false
+      for (let attempt = 1; attempt <= 10 && !reachable; attempt++) {
+        try {
+          ghRun(['api', `repos/${login}/awesome-dsh-plugin`])
+          reachable = true
+        } catch {
+          // 新建的 fork 可能要几秒才可写
+          await sleep(3000)
+        }
+      }
+      if (!reachable) throw new Error(`fork 不可用：${login}/awesome-dsh-plugin`)
+    }
+
     // 幂等判断：fork 上这个分支里的条目内容是否已经和我们一致
     let branchReady = false
     if (!dryRun) {
@@ -375,44 +397,27 @@ async function main() {
     }
 
     if (dryRun) {
-      console.log('  [dry-run] gh repo fork ' + AWESOME_REPO + ' --clone=false')
-      console.log('  [dry-run] git clone --depth 1 https://github.com/' + login + '/awesome-dsh-plugin.git <tmp>')
-      console.log('  [dry-run] 写入 ' + relPath)
-      console.log('  [dry-run] git checkout -b ' + branch + ' && git add && git commit && git push')
+      console.log('  [dry-run] gh api --method PUT repos/' + login + '/awesome-dsh-plugin/contents/' + relPath)
+      console.log('            （body: message + base64 内容 + branch=' + branch + '，一次调用同时建分支与文件）')
       if (flag('--pr')) {
         console.log('  [dry-run] gh pr create --repo ' + AWESOME_REPO + ' --head ' + login + ':' + branch + ' --base <默认分支>')
       }
     } else if (branchReady) {
-      console.log(`  fork 的分支 ${branch} 已存在且条目内容一致 —— 跳过提交与推送`)
+      console.log(`  fork 的分支 ${branch} 已存在且条目内容一致 —— 跳过写入`)
     } else {
-      try {
-        ghRun(['repo', 'fork', AWESOME_REPO, '--clone=false'])
-      } catch {
-        console.log('  fork 已存在，直接复用')
+      // 不用 clone：awesome 仓库的 data/plugins/ 有一万多个小文件，clone 一次要几分钟。
+      // Contents API 的 PUT 在 branch 不存在时会从默认分支自动建分支，一次调用就够。
+      const payload = {
+        message: `Add ${repo}`,
+        content: Buffer.from(yaml, 'utf8').toString('base64'),
+        branch,
       }
-      const forkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-awesome-'))
-      const forkUrl = `https://github.com/${login}/awesome-dsh-plugin.git`
-      let cloned = false
-      for (let attempt = 1; attempt <= 6 && !cloned; attempt++) {
-        try {
-          runner.run('git', ['clone', '--depth', '1', forkUrl, forkDir])
-          cloned = true
-        } catch {
-          console.log(`  克隆失败，第 ${attempt} 次重试（新建 fork 可能需要几秒）`)
-          await new Promise((resolve) => setTimeout(resolve, 4000))
-        }
-      }
-      if (!cloned) throw new Error('克隆 fork 失败：' + forkUrl)
-
-      fs.mkdirSync(path.join(forkDir, 'data', 'plugins'), { recursive: true })
-      fs.writeFileSync(path.join(forkDir, relPath), yaml)
-      const gitFork = (gitArgs, gitEnv) =>
-        runner.run('git', ['-C', forkDir, ...gitArgs], gitEnv === undefined ? {} : { env: gitEnv })
-      gitFork(['checkout', '-b', branch])
-      gitFork(['add', relPath])
-      gitFork(['commit', '-m', `Add ${repo}`])
-      gitFork(['push', '-u', 'origin', branch], pushEnv)
-      console.log(`  已推送分支：${login}:${branch}`)
+      const raw = ghRun(
+        ['api', '--method', 'PUT', `repos/${login}/awesome-dsh-plugin/contents/${relPath}`, '--input', '-'],
+        { input: JSON.stringify(payload) },
+      )
+      const parsed = JSON.parse(raw)
+      console.log(`  已提交到分支 ${parsed?.commit?.sha ? parsed.commit.sha.slice(0, 7) : '(未知)'}：${login}:${branch}`)
     }
 
     if (flag('--pr') && !dryRun) {
