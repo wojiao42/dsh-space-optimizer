@@ -361,35 +361,37 @@ async function main() {
       }
     }
 
-    // 分支要建在自己的 fork 上：先确保 fork 存在并可用（都是 API 调用，不 clone）
+    // 全部走 API，不 clone：awesome 仓库的 data/plugins/ 有一万多个小文件，
+    // clone 一次要几分钟（实测 5 分钟没完，被迫放弃）。
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const forkSlug = `${login}/awesome-dsh-plugin`
+    let baseBranch = 'main'
+    let branchReady = false
+
     if (!dryRun) {
+      // a) 确保 fork 存在且可用
       try {
         ghRun(['repo', 'fork', AWESOME_REPO, '--clone=false'])
         console.log('  已创建 fork')
       } catch {
         console.log('  fork 已存在，复用')
       }
-      let reachable = false
-      for (let attempt = 1; attempt <= 10 && !reachable; attempt++) {
+      let info
+      for (let attempt = 1; attempt <= 10 && info === undefined; attempt++) {
         try {
-          ghRun(['api', `repos/${login}/awesome-dsh-plugin`])
-          reachable = true
+          info = JSON.parse(ghRun(['api', `repos/${forkSlug}`]))
         } catch {
-          // 新建的 fork 可能要几秒才可写
-          await sleep(3000)
+          await sleep(3000) // 新建的 fork 可能要几秒才可用
         }
       }
-      if (!reachable) throw new Error(`fork 不可用：${login}/awesome-dsh-plugin`)
-    }
+      if (info === undefined) throw new Error('fork 不可用：' + forkSlug)
+      baseBranch = typeof info.default_branch === 'string' ? info.default_branch : 'main'
+      console.log(`  fork 就绪：${forkSlug}（默认分支 ${baseBranch}）`)
 
-    // 幂等判断：fork 上这个分支里的条目内容是否已经和我们一致
-    let branchReady = false
-    if (!dryRun) {
+      // b) 幂等：分支里的条目内容是否已与我们一致
       try {
-        const raw = ghRun(['api', `repos/${login}/awesome-dsh-plugin/contents/${relPath}?ref=${branch}`])
-        const parsed = JSON.parse(raw)
-        const decoded = Buffer.from(String(parsed.content ?? '').replace(/\s/g, ''), 'base64').toString('utf8')
+        const existing = JSON.parse(ghRun(['api', `repos/${forkSlug}/contents/${relPath}?ref=${branch}`]))
+        const decoded = Buffer.from(String(existing.content ?? '').replace(/\s/g, ''), 'base64').toString('utf8')
         branchReady = decoded === yaml
       } catch {
         branchReady = false
@@ -397,33 +399,43 @@ async function main() {
     }
 
     if (dryRun) {
-      console.log('  [dry-run] gh api --method PUT repos/' + login + '/awesome-dsh-plugin/contents/' + relPath)
-      console.log('            （body: message + base64 内容 + branch=' + branch + '，一次调用同时建分支与文件）')
+      console.log(`  [dry-run] gh api repos/${forkSlug}/git/ref/heads/${baseBranch}   → 取 base SHA`)
+      console.log(`  [dry-run] gh api --method POST repos/${forkSlug}/git/refs        → 建分支 ${branch}`)
+      console.log(`  [dry-run] gh api --method PUT repos/${forkSlug}/contents/${relPath}  → 写条目`)
       if (flag('--pr')) {
-        console.log('  [dry-run] gh pr create --repo ' + AWESOME_REPO + ' --head ' + login + ':' + branch + ' --base <默认分支>')
+        console.log(`  [dry-run] gh pr create --repo ${AWESOME_REPO} --head ${login}:${branch} --base ${baseBranch}`)
       }
     } else if (branchReady) {
-      console.log(`  fork 的分支 ${branch} 已存在且条目内容一致 —— 跳过写入`)
+      console.log(`  分支 ${branch} 已存在且条目内容一致 —— 跳过写入`)
     } else {
-      // 不用 clone：awesome 仓库的 data/plugins/ 有一万多个小文件，clone 一次要几分钟。
-      // Contents API 的 PUT 在 branch 不存在时会从默认分支自动建分支，一次调用就够。
-      const payload = {
-        message: `Add ${repo}`,
-        content: Buffer.from(yaml, 'utf8').toString('base64'),
-        branch,
+      // c) 建分支（Contents API 不会自动建分支：直接 PUT 会 404 "Branch not found"）
+      const ref = JSON.parse(ghRun(['api', `repos/${forkSlug}/git/ref/heads/${baseBranch}`]))
+      const baseSha = ref?.object?.sha
+      if (typeof baseSha !== 'string') throw new Error('拿不到 base SHA，无法建分支')
+      try {
+        ghRun(['api', '--method', 'POST', `repos/${forkSlug}/git/refs`, '--input', '-'], {
+          input: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseSha }),
+        })
+        console.log(`  已建分支 ${branch}（基于 ${baseBranch}@${baseSha.slice(0, 7)}）`)
+      } catch {
+        console.log(`  分支 ${branch} 已存在，复用它`)
       }
-      const raw = ghRun(
-        ['api', '--method', 'PUT', `repos/${login}/awesome-dsh-plugin/contents/${relPath}`, '--input', '-'],
-        { input: JSON.stringify(payload) },
-      )
+
+      // d) 写条目文件
+      const raw = ghRun(['api', '--method', 'PUT', `repos/${forkSlug}/contents/${relPath}`, '--input', '-'], {
+        input: JSON.stringify({
+          message: `Add ${repo}`,
+          content: Buffer.from(yaml, 'utf8').toString('base64'),
+          branch,
+        }),
+      })
       const parsed = JSON.parse(raw)
-      console.log(`  已提交到分支 ${parsed?.commit?.sha ? parsed.commit.sha.slice(0, 7) : '(未知)'}：${login}:${branch}`)
+      console.log(`  已写入条目（commit ${parsed?.commit?.sha ? parsed.commit.sha.slice(0, 7) : '未知'}）：${login}:${branch}`)
     }
 
     if (flag('--pr') && !dryRun) {
       // `--head owner:branch` 不能省：这个进程的 cwd 是插件仓库而不是 fork，
       // gh 无法自行推断 PR 的头分支，会去用插件仓库的 remote 然后报错。
-      const baseBranch = ghRun(['api', AWESOME_REPO, '-q', '.default_branch']).trim() || 'main'
       ghRun([
         'pr', 'create',
         '--repo', AWESOME_REPO,
