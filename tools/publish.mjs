@@ -146,10 +146,12 @@ function makeRunner(dryRun) {
 
 function usage() {
   console.log(`用法：
-  node tools/publish.mjs [--dry-run] [--pr] [--repo <名称>] [--owner <登录名>] [--email <邮箱>]
+  node tools/publish.mjs [--dry-run] [--prepare-pr] [--pr] [--repo <名称>] [--owner <登录名>] [--email <邮箱>]
 
 不传 --repo 时用 package.json 的 name。令牌取 GH_TOKEN 环境变量或工作区根的 .gh-token。
---dry-run 只打印命令；--pr 会先校验"仓库创建满 1 天"再提收录 PR。`)
+  --dry-run      只打印命令，不碰任何东西
+  --prepare-pr   先推好 fork 与分支（不受"仓库满 1 天"限制）
+  --pr           提收录 PR；会先校验 24 小时门槛，不满就直接拒绝并告诉你还差多久`)
 }
 
 async function main() {
@@ -333,23 +335,49 @@ async function main() {
     console.log('  收录条目已生成:', submissionFile)
   }
 
-  // 7. 提 PR（受"仓库满 1 天"约束）
-  if (flag('--pr')) {
-    if (dryRun) {
-      console.log('  [dry-run] gh api repos/' + login + '/' + repo + ' -q .created_at  → 校验满 1 天后 fork + 提 PR')
-    } else {
+  // 7. fork + 分支 + 条目（不依赖仓库年龄），以及可选的 PR（受"仓库满 1 天"约束）
+  if (flag('--pr') || flag('--prepare-pr')) {
+    const branch = `add-${repo}`
+    const file = `${login}__${repo}.yml`
+    const relPath = `data/plugins/${file}`
+
+    if (flag('--pr') && !dryRun) {
       const createdAt = ghRun(['api', `repos/${login}/${repo}`, '-q', '.created_at']).trim()
       const age = repoAgeOk(createdAt)
       if (!age.ok) {
         console.log('')
         console.log(`  收录 PR 暂时提不了：仓库创建于 ${createdAt}，还差 ${humanWait(age.waitMs)} 才满 1 天。`)
         console.log('  （CI 会硬性校验这一条，现在提只会得到一个必红的 PR。）')
+        console.log('  可以先跑 --prepare-pr 把 fork 与分支推好，到点只差一条 gh pr create。')
         console.log(`  到点后再跑：node tools/publish.mjs --pr`)
-        return
+        if (!flag('--prepare-pr')) return
       }
-      const branch = `add-${repo}`
+    }
 
-      // fork（已存在就复用；gh 新建 fork 是异步的，克隆要重试）
+    // 幂等判断：fork 上这个分支里的条目内容是否已经和我们一致
+    let branchReady = false
+    if (!dryRun) {
+      try {
+        const raw = ghRun(['api', `repos/${login}/awesome-dsh-plugin/contents/${relPath}?ref=${branch}`])
+        const parsed = JSON.parse(raw)
+        const decoded = Buffer.from(String(parsed.content ?? '').replace(/\s/g, ''), 'base64').toString('utf8')
+        branchReady = decoded === yaml
+      } catch {
+        branchReady = false
+      }
+    }
+
+    if (dryRun) {
+      console.log('  [dry-run] gh repo fork ' + AWESOME_REPO + ' --clone=false')
+      console.log('  [dry-run] git clone --depth 1 https://github.com/' + login + '/awesome-dsh-plugin.git <tmp>')
+      console.log('  [dry-run] 写入 ' + relPath)
+      console.log('  [dry-run] git checkout -b ' + branch + ' && git add && git commit && git push')
+      if (flag('--pr')) {
+        console.log('  [dry-run] gh pr create --repo ' + AWESOME_REPO + ' --head ' + login + ':' + branch + ' --base <默认分支>')
+      }
+    } else if (branchReady) {
+      console.log(`  fork 的分支 ${branch} 已存在且条目内容一致 —— 跳过提交与推送`)
+    } else {
       try {
         ghRun(['repo', 'fork', AWESOME_REPO, '--clone=false'])
       } catch {
@@ -369,16 +397,18 @@ async function main() {
       }
       if (!cloned) throw new Error('克隆 fork 失败：' + forkUrl)
 
-      const targetDir = path.join(forkDir, 'data', 'plugins')
-      fs.mkdirSync(targetDir, { recursive: true })
-      fs.writeFileSync(path.join(targetDir, `${login}__${repo}.yml`), yaml)
+      fs.mkdirSync(path.join(forkDir, 'data', 'plugins'), { recursive: true })
+      fs.writeFileSync(path.join(forkDir, relPath), yaml)
       const gitFork = (gitArgs, gitEnv) =>
         runner.run('git', ['-C', forkDir, ...gitArgs], gitEnv === undefined ? {} : { env: gitEnv })
       gitFork(['checkout', '-b', branch])
-      gitFork(['add', `data/plugins/${login}__${repo}.yml`])
+      gitFork(['add', relPath])
       gitFork(['commit', '-m', `Add ${repo}`])
       gitFork(['push', '-u', 'origin', branch], pushEnv)
+      console.log(`  已推送分支：${login}:${branch}`)
+    }
 
+    if (flag('--pr') && !dryRun) {
       // `--head owner:branch` 不能省：这个进程的 cwd 是插件仓库而不是 fork，
       // gh 无法自行推断 PR 的头分支，会去用插件仓库的 remote 然后报错。
       const baseBranch = ghRun(['api', AWESOME_REPO, '-q', '.default_branch']).trim() || 'main'
@@ -394,7 +424,9 @@ async function main() {
     }
   } else {
     console.log('')
-    console.log('下一步：等仓库创建满 1 天后跑 `node tools/publish.mjs --pr` 提收录 PR。')
+    console.log('下一步（两选一）：')
+    console.log('  node tools/publish.mjs --prepare-pr   # 先推好 fork 与分支（不受仓库年龄限制）')
+    console.log('  node tools/publish.mjs --pr           # 仓库满 1 天后提收录 PR')
   }
 }
 
