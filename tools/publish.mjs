@@ -306,7 +306,14 @@ async function main() {
       }
     }
     runner.run('git', ['-C', PLUGIN_ROOT, 'push', '-u', 'origin', 'main'], { env: pushEnv })
-    ghRun(['repo', 'edit', `${login}/${repo}`, '--add-topic', 'dsh-plugin', '--add-topic', 'deepseek-harness', '--add-topic', 'dsh'])
+    // topic 是幂等的装饰性步骤，且首次设置后就没必要再动：
+    // 网络抖一下不该把整条发布流程炸掉（实测踩到过 api.github.com 的 EOF）。
+    try {
+      ghRun(['repo', 'edit', `${login}/${repo}`, '--add-topic', 'dsh-plugin', '--add-topic', 'deepseek-harness', '--add-topic', 'dsh'])
+    } catch {
+      console.log('  设置 topic 失败（通常是网络抖动或已存在），跳过；可手动补：')
+      console.log(`    gh repo edit ${login}/${repo} --add-topic dsh-plugin --add-topic deepseek-harness --add-topic dsh`)
+    }
   }
 
   // 6. 生成收录条目
