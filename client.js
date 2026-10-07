@@ -122,6 +122,12 @@ window.__ModuleLoader__.load({
       'border:none;border-radius:var(--dsw-radius-sm,8px);background:0 0;font:inherit;',
       'font-size:var(--dsh-content-font-size-secondary,13px);line-height:1.4;color:var(--dsw-alias-label-tertiary);white-space:nowrap}',
       '.sop-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}',
+      // 焦点环自带一套：主题里管焦点环的规则（`:focus-visible{outline:none}` 与
+      // pointer 模态下 `outline-color:#0000`）都是**文档级**的，照不到隔离的插槽子树，
+      // 于是浏览器默认的黑色焦点环会露出来——点过哪个按钮，哪个就挂一圈黑框。
+      // 这里鼠标点击不显示环，键盘聚焦给一个显式的蓝色环（保住可达性）。
+      '.sop-btn:focus{outline:none}',
+      '.sop-btn:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#3964fe));outline-offset:1px}',
       '.sop-btn svg{flex:none;display:block;width:14px;height:14px}',
       '.sop-backdrop{position:fixed;inset:0;z-index:95;background:rgba(0,0,0,.32);display:flex;align-items:center;justify-content:center;padding:20px}',
       '.sop-card{box-sizing:border-box;width:min(760px,100%);max-height:min(84vh,760px);display:flex;flex-direction:column;',
