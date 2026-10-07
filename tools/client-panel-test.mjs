@@ -314,6 +314,11 @@ check('样式表留在组件树里（按钮树 + 面板树两份），不挂 doc
   assert.ok(!/createElement\(\s*['"]style['"]\s*\)/.test(SOURCE_TEXT), '不该动态造 style 元素（树内渲染就行）')
   assert.equal(mountedStyles().length, 0, '不该再往 document.head 挂样式')
 })
+check('按钮内联兜底 border:none（样式表失效时不露浏览器默认黑框）', () => {
+  const button = find(render(true), (node) => node.props?.className === 'sop-btn')
+  assert.ok(button !== undefined, '没找到按钮')
+  assert.equal(button.props.style?.border, 'none')
+})
 check('图标自带内在尺寸，不依赖 CSS 生效时机', () => {
   // 假 React 不展开函数组件：找出函数节点并调用它，才能看到真实的 svg。
   const svg = findAll(render(true), (node) => typeof node.type === 'function')

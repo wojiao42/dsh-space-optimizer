@@ -762,6 +762,9 @@ window.__ModuleLoader__.load({
           {
             type: 'button',
             className: 'sop-btn',
+            // 内联兜底：只要样式表没生效（旧修订版、样式隔离、别人改文件…），
+            // 浏览器默认按钮外观就会画出那圈黑边。border 内联写死，任何情况下都不会再有黑框。
+            style: { border: 'none' },
             title: tr('label'),
             'aria-label': tr('label'),
             onClick: openPanel,
