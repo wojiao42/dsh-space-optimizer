@@ -80,14 +80,48 @@ export const findAll = (tree, predicate) => [...walk(tree)].filter(predicate)
 /** 找第一个满足条件的节点。 */
 export const find = (tree, predicate) => findAll(tree, predicate)[0]
 
+/** 已挂到假 `document.head` 上的样式表元素（供测试与出图脚本取插件真正用的 CSS）。 */
+const mountedStyleElements = []
+
+/** 取当前已挂载的样式表元素（浅拷贝）。 */
+export const mountedStyles = () => mountedStyleElements.slice()
+
 /**
  * 安装 `window` / `document` 桩，然后加载 `client.js`，返回模块定义。
+ *
+ * 假 `document` 支持 `createElement('style')` + `head.appendChild`：插件把样式表挂到
+ * head 的行为要能被观察到，出图脚本也必须拿到插件真正用的那份 CSS。
+ *
  * @param {string} clientPath `client.js` 的绝对路径。
  * @returns {Promise<{id: string, factory: Function}>}
  */
 export async function loadClientDefinition(clientPath) {
+  mountedStyleElements.length = 0
   let definition
-  globalThis.document = { body: { nodeName: '#portal-host' } }
+  const head = {
+    appendChild(node) {
+      if (node !== null && typeof node === 'object' && node.tagName === 'style') mountedStyleElements.push(node)
+      return node
+    },
+  }
+  globalThis.document = {
+    head,
+    body: { nodeName: '#portal-host' },
+    createElement(tagName) {
+      return {
+        tagName,
+        textContent: '',
+        attributes: {},
+        setAttribute(name, value) {
+          this.attributes[name] = value
+        },
+        remove() {
+          const index = mountedStyleElements.indexOf(this)
+          if (index !== -1) mountedStyleElements.splice(index, 1)
+        },
+      }
+    },
+  }
   globalThis.window = {
     __ModuleLoader__: {
       load(value) {

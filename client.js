@@ -116,12 +116,13 @@ window.__ModuleLoader__.load({
     };
 
     const CSS = [
-      '.sop-root{display:inline-flex;align-items:center;min-width:0}',
+      // flex:none：侧栏页脚是 flex 容器，按钮不该被拉伸或压缩；尺寸由内容决定。
+      '.sop-root{display:inline-flex;align-items:center;min-width:0;flex:none}',
       '.sop-btn{box-sizing:border-box;display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:4px 8px;',
       'border:none;border-radius:var(--dsw-radius-sm,8px);background:0 0;font:inherit;',
       'font-size:var(--dsh-content-font-size-secondary,13px);line-height:1.4;color:var(--dsw-alias-label-tertiary);white-space:nowrap}',
       '.sop-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}',
-      '.sop-btn svg{flex:none;width:14px;height:14px}',
+      '.sop-btn svg{flex:none;display:block;width:14px;height:14px}',
       '.sop-backdrop{position:fixed;inset:0;z-index:95;background:rgba(0,0,0,.32);display:flex;align-items:center;justify-content:center;padding:20px}',
       '.sop-card{box-sizing:border-box;width:min(760px,100%);max-height:min(84vh,760px);display:flex;flex-direction:column;',
       'border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg,16px);overflow:hidden;',
@@ -190,10 +191,23 @@ window.__ModuleLoader__.load({
     const asNumber = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
     const asArray = (value) => (Array.isArray(value) ? value : []);
 
+    /**
+     * 图标。**必须给内在的 width/height**：只有 viewBox 的 SVG 在 CSS 尚未生效时
+     * 会按替换元素默认尺寸（300×150）渲染，把侧栏按钮撑大——实测症状就是
+     * 「按钮首帧偏大，点开面板触发重渲染后才恢复正常」。
+     * CSS 里的 `.sop-btn svg{width:14px;height:14px}` 保留作为兜底，但不再依赖它。
+     */
     const SparkIcon = () =>
       h(
         'svg',
-        { viewBox: '0 0 16 16', xmlns: 'http://www.w3.org/2000/svg', 'aria-hidden': 'true', focusable: 'false' },
+        {
+          viewBox: '0 0 16 16',
+          width: 14,
+          height: 14,
+          xmlns: 'http://www.w3.org/2000/svg',
+          'aria-hidden': 'true',
+          focusable: 'false',
+        },
         h('path', { d: 'M8 1.4l1.3 3.2 3.2 1.3-3.2 1.3L8 10.4 6.7 7.2 3.5 5.9l3.2-1.3L8 1.4z', fill: 'currentColor' }),
         h('path', {
           d: 'M4 10.6l.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7L1.6 13l1.7-.7.7-1.7z',
@@ -536,7 +550,6 @@ window.__ModuleLoader__.load({
                         : null,
                     ),
                   ),
-                  h('style', null, CSS),
                   h(
                     'div',
                     { className: 'sop-body' },
@@ -731,7 +744,6 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { className: 'sop-root', 'data-space-optimizer': 'button' },
-        h('style', null, CSS),
         h(
           'button',
           {
@@ -750,8 +762,31 @@ window.__ModuleLoader__.load({
 
     const inject = ['slots', 'locale', 'sessions'];
 
+    /**
+     * 样式表挂在 `document.head`，**在插件挂载时就注入**，早于任何渲染。
+     *
+     * 之前是把 `<style>` 渲染在组件自己的 DOM 树里（作为 `.sop-root` 的子节点）。
+     * 那样在真实侧栏里会有一个可见的毛病：样式表若晚于首帧生效，只有 `viewBox`
+     * 的 SVG 图标就按默认尺寸撑开，按钮首帧偏大，直到点开面板触发重渲染才恢复正常。
+     * 放到 head 里就没有这个时间窗，也不受插槽子树作用域影响。
+     */
+    function mountStyles() {
+      if (typeof document === 'undefined' || document.head === undefined || document.head === null) {
+        return undefined;
+      }
+      const element = document.createElement('style');
+      element.setAttribute('data-dsh-space-optimizer', 'styles');
+      element.textContent = CSS;
+      document.head.appendChild(element);
+      return () => {
+        if (typeof element.remove === 'function') element.remove();
+        else if (element.parentNode) element.parentNode.removeChild(element);
+      };
+    }
+
     function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh: ZH, en: EN }), 'space-optimizer: dictionaries');
+      ctx.effect(mountStyles, 'space-optimizer: stylesheet');
       ctx.slots.inject('sidebar.footer.action', () =>
         ctx.slots.register(
           {

@@ -18,7 +18,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { createPlugin, createReact, findAll, find, loadClientDefinition } from './lib/harness.mjs'
+import { createPlugin, createReact, findAll, find, loadClientDefinition, mountedStyles } from './lib/harness.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const CLIENT_SOURCE = path.join(here, '..', 'client.js')
@@ -296,6 +296,34 @@ check('侧栏收起时只剩图标（文字为空）', () => {
   const button = find(collapsed, (node) => node.props.className === 'sop-btn')
   assert.equal(button.props.title, ZH.label)
   assert.ok(!button.children.some((child) => typeof child === 'string'), '收起时不该有文字')
+})
+
+// 回归：样式表必须挂在 document.head，而不是渲染在组件自己的 DOM 树里。
+// 真实侧栏里踩过这个坑——样式表若晚于首帧生效，只有 viewBox 的 SVG 图标会按替换元素
+// 默认尺寸（300×150）撑开，按钮首帧偏大，点开面板触发重渲染才恢复正常。
+check('样式表挂到 document.head，渲染树里不再有 <style>', () => {
+  const styles = mountedStyles()
+  assert.equal(styles.length, 1, '应恰好挂一份样式表，实际 ' + styles.length)
+  assert.equal(styles[0].attributes['data-dsh-space-optimizer'], 'styles')
+  assert.ok(styles[0].textContent.includes('.sop-btn svg'), '样式表应含按钮图标规则')
+  assert.equal(find(render(true), (node) => node.type === 'style'), undefined, '渲染树里不该再有 <style>')
+  assert.ok(!SOURCE_TEXT.includes("h('style'"), '源码里不该再往渲染树里塞 <style>')
+})
+check('图标自带内在尺寸，不依赖 CSS 生效时机', () => {
+  // 假 React 不展开函数组件：找出函数节点并调用它，才能看到真实的 svg。
+  const svg = findAll(render(true), (node) => typeof node.type === 'function')
+    .map((node) => {
+      try {
+        return node.type(node.props)
+      } catch {
+        return undefined
+      }
+    })
+    .find((output) => output?.type === 'svg')
+  assert.ok(svg !== undefined, '没找到图标')
+  assert.equal(svg.props.width, 14)
+  assert.equal(svg.props.height, 14)
+  assert.equal(svg.props.viewBox, '0 0 16 16')
 })
 
 console.log('\n[4] 打开账本')

@@ -20,7 +20,7 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-import { createPlugin, createReact, findAll, find, loadClientDefinition } from './lib/harness.mjs'
+import { createPlugin, createReact, findAll, find, loadClientDefinition, mountedStyles } from './lib/harness.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(here, '..')
@@ -291,8 +291,13 @@ find(tree, (node) => node.props.className === 'sop-btn').props.onClick()
 await tick()
 await tick()
 tree = render()
-// 组件输出三部分：自己的 <style>、侧栏按钮、portal（遮罩+卡片）。分开序列化，各摆各的位置。
-const stylesHtml = findAll(tree, (node) => node.type === 'style').map(toHtml).join('')
+// 组件输出两部分：侧栏按钮 + portal（遮罩+卡片）。样式表不在渲染树里——插件把 CSS
+// 挂在 document.head 上（假 document 会记录下来），这里取出那份真正生效的 CSS。
+const cssText = mountedStyles()
+  .map((element) => element.textContent)
+  .join('\n')
+if (!cssText.includes('.sop-btn')) throw new Error('没拿到插件样式表：' + cssText.slice(0, 80))
+const stylesHtml = `<style>${cssText}</style>`
 const buttonHtml = toHtml(find(tree, (node) => node.props.className === 'sop-btn'))
 const ledgerHtml = toHtml(backdropOf(tree))
 
