@@ -264,6 +264,7 @@ window.__ModuleLoader__.load({
       const tr = React.useCallback((key) => (typeof t === 'function' ? t(key) : key), [t]);
       const list = useSessionsSnapshot(sessionsSource, useSessions);
       const [open, setOpen] = React.useState(false);
+      const [hover, setHover] = React.useState(false);
       const [phase, setPhase] = React.useState('idle');
       const [ledger, setLedger] = React.useState(null);
       const [picked, setPicked] = React.useState(() => new Set());
@@ -750,6 +751,31 @@ window.__ModuleLoader__.load({
             )
           : null;
 
+      /**
+       * 按钮外观整体内联，不再依赖样式表是否生效。
+       *
+       * 起因：侧栏插槽子树与文档之间有样式隔离，而窗口还可能加载到**旧的客户端修订版**
+       * （Host 会继续发上一批修订版）。只要样式表没生效，浏览器默认按钮外观就会露出来——
+       * 先是一圈黑边，去掉边框后还剩灰底（buttonface）。所以底色/字号/内距/圆角/悬停态
+       * 全部内联写死；`:focus-visible` 仍交给 CSS（键盘可达性不受影响）。
+       */
+      const buttonStyle = {
+        boxSizing: 'border-box',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '4px 8px',
+        border: 'none',
+        borderRadius: 'var(--dsw-radius-sm,8px)',
+        background: hover ? 'var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.05))' : 'transparent',
+        color: hover ? 'var(--dsw-alias-label-secondary,#545557)' : 'var(--dsw-alias-label-tertiary,#7f8287)',
+        font: 'inherit',
+        fontSize: 'var(--dsh-content-font-size-secondary,13px)',
+        lineHeight: 1.4,
+        whiteSpace: 'nowrap',
+        cursor: 'pointer',
+      };
+
       return h(
         'div',
         { className: 'sop-root', 'data-space-optimizer': 'button' },
@@ -762,12 +788,14 @@ window.__ModuleLoader__.load({
           {
             type: 'button',
             className: 'sop-btn',
-            // 内联兜底：只要样式表没生效（旧修订版、样式隔离、别人改文件…），
-            // 浏览器默认按钮外观就会画出那圈黑边。border 内联写死，任何情况下都不会再有黑框。
-            style: { border: 'none' },
+            style: buttonStyle,
             title: tr('label'),
             'aria-label': tr('label'),
             onClick: openPanel,
+            onMouseEnter: () => setHover(true),
+            onMouseLeave: () => setHover(false),
+            onFocus: () => setHover(true),
+            onBlur: () => setHover(false),
           },
           h(SparkIcon, null),
           wide ? tr('label') : null,
