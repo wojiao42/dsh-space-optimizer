@@ -291,13 +291,11 @@ find(tree, (node) => node.props.className === 'sop-btn').props.onClick()
 await tick()
 await tick()
 tree = render()
-// 组件输出两部分：侧栏按钮 + portal（遮罩+卡片）。样式表不在渲染树里——插件把 CSS
-// 挂在 document.head 上（假 document 会记录下来），这里取出那份真正生效的 CSS。
-const cssText = mountedStyles()
-  .map((element) => element.textContent)
-  .join('\n')
-if (!cssText.includes('.sop-btn')) throw new Error('没拿到插件样式表：' + cssText.slice(0, 80))
-const stylesHtml = `<style>${cssText}</style>`
+// 样式表在渲染树里（按钮树一份、面板树一份），一起序列化进页面。
+// 不能改用 document.head —— 插槽子树与文档之间有样式隔离，只有树内样式才照得到
+// 侧栏按钮（踩过：按钮一直挂着一圈黑框，而 portal 到 body 的面板照常）。
+const stylesHtml = findAll(tree, (node) => node.type === 'style').map(toHtml).join('')
+if (!stylesHtml.includes('.sop-btn')) throw new Error('没从渲染树里拿到插件样式表')
 const buttonHtml = toHtml(find(tree, (node) => node.props.className === 'sop-btn'))
 const ledgerHtml = toHtml(backdropOf(tree))
 

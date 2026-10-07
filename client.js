@@ -550,6 +550,9 @@ window.__ModuleLoader__.load({
                         : null,
                     ),
                   ),
+                  // 面板走 portal 渲染到 document.body，和按钮不在同一棵树里，
+                  // 所以这份样式表也要跟着面板走（否则面板会掉回无样式）。
+                  h('style', null, CSS),
                   h(
                     'div',
                     { className: 'sop-body' },
@@ -744,6 +747,10 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { className: 'sop-root', 'data-space-optimizer': 'button' },
+        // 样式表必须留在组件树里：侧栏插槽子树与 document 之间有样式隔离，
+        // 挂到 document.head 的那份**照不到这个按钮**（面板走 portal 到 body 所以照常），
+        // 结果就是按钮露出 UA 默认外观、一直挂着一圈黑框。
+        h('style', null, CSS),
         h(
           'button',
           {
@@ -763,30 +770,16 @@ window.__ModuleLoader__.load({
     const inject = ['slots', 'locale', 'sessions'];
 
     /**
-     * 样式表挂在 `document.head`，**在插件挂载时就注入**，早于任何渲染。
+     * 样式表**不能**挂到 `document.head`（曾经这么试过，结果是按钮一直挂着一圈黑框）。
      *
-     * 之前是把 `<style>` 渲染在组件自己的 DOM 树里（作为 `.sop-root` 的子节点）。
-     * 那样在真实侧栏里会有一个可见的毛病：样式表若晚于首帧生效，只有 `viewBox`
-     * 的 SVG 图标就按默认尺寸撑开，按钮首帧偏大，直到点开面板触发重渲染才恢复正常。
-     * 放到 head 里就没有这个时间窗，也不受插槽子树作用域影响。
+     * 侧栏插槽渲染出来的子树与文档之间存在样式隔离——文档级样式表照不到这个按钮，
+     * 而面板因为是 portal 到 `document.body` 才照常。所以两处各带一份树内 `<style>`：
+     *   · `.sop-root` 里那份 → 管按钮（在隔离树里）
+     *   · `.sop-card` 里那份 → 管面板（在 body 里）
+     * 「首帧图标被撑大」那个老毛病由图标自身的内在 `width/height` 兜住，不靠样式表时机。
      */
-    function mountStyles() {
-      if (typeof document === 'undefined' || document.head === undefined || document.head === null) {
-        return undefined;
-      }
-      const element = document.createElement('style');
-      element.setAttribute('data-dsh-space-optimizer', 'styles');
-      element.textContent = CSS;
-      document.head.appendChild(element);
-      return () => {
-        if (typeof element.remove === 'function') element.remove();
-        else if (element.parentNode) element.parentNode.removeChild(element);
-      };
-    }
-
     function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh: ZH, en: EN }), 'space-optimizer: dictionaries');
-      ctx.effect(mountStyles, 'space-optimizer: stylesheet');
       ctx.slots.inject('sidebar.footer.action', () =>
         ctx.slots.register(
           {

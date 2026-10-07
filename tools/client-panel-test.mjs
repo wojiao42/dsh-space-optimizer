@@ -298,16 +298,21 @@ check('侧栏收起时只剩图标（文字为空）', () => {
   assert.ok(!button.children.some((child) => typeof child === 'string'), '收起时不该有文字')
 })
 
-// 回归：样式表必须挂在 document.head，而不是渲染在组件自己的 DOM 树里。
-// 真实侧栏里踩过这个坑——样式表若晚于首帧生效，只有 viewBox 的 SVG 图标会按替换元素
-// 默认尺寸（300×150）撑开，按钮首帧偏大，点开面板触发重渲染才恢复正常。
-check('样式表挂到 document.head，渲染树里不再有 <style>', () => {
-  const styles = mountedStyles()
-  assert.equal(styles.length, 1, '应恰好挂一份样式表，实际 ' + styles.length)
-  assert.equal(styles[0].attributes['data-dsh-space-optimizer'], 'styles')
-  assert.ok(styles[0].textContent.includes('.sop-btn svg'), '样式表应含按钮图标规则')
-  assert.equal(find(render(true), (node) => node.type === 'style'), undefined, '渲染树里不该再有 <style>')
-  assert.ok(!SOURCE_TEXT.includes("h('style'"), '源码里不该再往渲染树里塞 <style>')
+// 回归：样式表必须留在组件树里。挂到 document.head 会照不到侧栏插槽子树
+// （插槽树与文档之间有样式隔离），按钮于是露出 UA 默认外观——实测表现是
+// 「按钮一直挂着一圈黑框」，而 portal 到 body 的面板照常，很容易误判成别的毛病。
+check('样式表留在组件树里（按钮树 + 面板树两份），不挂 document.head', () => {
+  const styleNode = find(render(true), (node) => node.type === 'style')
+  assert.ok(styleNode !== undefined, '按钮所在的 DOM 树里必须有 <style>')
+  assert.ok(String(styleNode.children.join('')).includes('.sop-btn svg'), '样式表应含按钮图标规则')
+  assert.equal(
+    (SOURCE_TEXT.match(/h\('style', null, CSS\)/g) ?? []).length,
+    2,
+    '应当恰好两处树内样式表（按钮树一份、面板树一份）',
+  )
+  assert.ok(!/document\.head\.(appendChild|replaceChildren|append)\s*\(/.test(SOURCE_TEXT), '不能把样式表挂到 document.head')
+  assert.ok(!/createElement\(\s*['"]style['"]\s*\)/.test(SOURCE_TEXT), '不该动态造 style 元素（树内渲染就行）')
+  assert.equal(mountedStyles().length, 0, '不该再往 document.head 挂样式')
 })
 check('图标自带内在尺寸，不依赖 CSS 生效时机', () => {
   // 假 React 不展开函数组件：找出函数节点并调用它，才能看到真实的 svg。
